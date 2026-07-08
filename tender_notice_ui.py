@@ -21,12 +21,9 @@ APP_DIR = Path(__file__).resolve().parent
 KEYWORDS_FILE = APP_DIR / "keywords.json"
 
 
-class TenderNoticeApp(tk.Tk):
-    def __init__(self) -> None:
-        super().__init__()
-        self.title("標案批次查詢")
-        self.geometry("1220x760")
-        self.minsize(960, 560)
+class TenderNoticeApp(ttk.Frame):
+    def __init__(self, master: tk.Misc | None = None) -> None:
+        super().__init__(master)
 
         self.rows: list[dict[str, str]] = []
         self.worker: threading.Thread | None = None
@@ -858,8 +855,13 @@ class TenderNoticeApp(tk.Tk):
 
 
 def main() -> None:
-    app = TenderNoticeApp()
-    app.mainloop()
+    root = tk.Tk()
+    root.title("標案批次查詢")
+    root.geometry("1220x760")
+    root.minsize(960, 560)
+    app = TenderNoticeApp(root)
+    app.pack(fill="both", expand=True)
+    root.mainloop()
 
 
 if __name__ == "__main__":
