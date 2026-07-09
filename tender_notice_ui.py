@@ -943,7 +943,7 @@ class TenderNoticeApp(ttk.Frame):
         ttk.Label(date_row, text="迄日").pack(side=tk.LEFT, padx=(10, 4))
         self.appeal_end_date_var = tk.StringVar(value=default_end)
         ttk.Entry(date_row, width=14, textvariable=self.appeal_end_date_var).pack(side=tk.LEFT)
-        ttk.Button(date_row, text="最近 3 個月", command=self.apply_recent_appeal_dates).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(date_row, text="最近 3 天", command=self.apply_recent_appeal_dates).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(date_row, text="日期用西元，例如 2026/07/09；民國年也可；區間請勿超過 3 個月",
                   foreground="#666").pack(side=tk.LEFT, padx=(10, 0))
 
@@ -962,15 +962,14 @@ class TenderNoticeApp(ttk.Frame):
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
 
-        columns = ("keyword", "agency", "tender_id", "name", "announce", "deadline", "count")
+        columns = ("keyword", "agency", "tender_id", "name", "appeal_date", "count")
         self.appeal_tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
         headings = {
             "keyword": "查詢名稱",
             "agency": "機關",
             "tender_id": "案號",
             "name": "標案名稱",
-            "announce": "公告日期",
-            "deadline": "截止日期",
+            "appeal_date": "公開徵求日期",
             "count": "公告次數",
         }
         widths = {
@@ -978,8 +977,7 @@ class TenderNoticeApp(ttk.Frame):
             "agency": 240,
             "tender_id": 150,
             "name": 400,
-            "announce": 100,
-            "deadline": 100,
+            "appeal_date": 190,
             "count": 70,
         }
         for col in columns:
@@ -995,7 +993,7 @@ class TenderNoticeApp(ttk.Frame):
 
     def _recent_appeal_range(self) -> tuple[str, str]:
         today = datetime.now()
-        start = today - timedelta(days=89)
+        start = today - timedelta(days=2)
         return start.strftime("%Y/%m/%d"), today.strftime("%Y/%m/%d")
 
     def apply_recent_appeal_dates(self) -> None:
@@ -1141,8 +1139,7 @@ class TenderNoticeApp(ttk.Frame):
                     row["agency"],
                     row["tender_id"],
                     row["tender_name"],
-                    row["announcement_date"],
-                    row["deadline"],
+                    self._appeal_date_text(row),
                     row["announcement_count"],
                 ),
             )
@@ -1150,6 +1147,13 @@ class TenderNoticeApp(ttk.Frame):
         self.status_var.set(f"{prefix}公開徵求共 {len(rows)} 筆")
         if not rows and not stopped:
             messagebox.showinfo("查無資料", "目前日期區間沒有查到公開徵求資料，請調整標案名稱或日期後再查一次。")
+
+    def _appeal_date_text(self, row: dict[str, str]) -> str:
+        announce = row.get("announcement_date", "")
+        deadline = row.get("deadline", "")
+        if announce and deadline:
+            return f"{announce} ~ {deadline}"
+        return announce or deadline
 
     def appeal_clear_results(self) -> None:
         self.appeal_rows = []
@@ -1207,8 +1211,7 @@ class TenderNoticeApp(ttk.Frame):
             ("tender_id", "標案案號"),
             ("tender_name", "標案名稱"),
             ("announcement_count", "公告次數"),
-            ("announcement_date", "公告日期"),
-            ("deadline", "截止日期"),
+            ("appeal_date", "公開徵求日期"),
             ("detail_url", "徵求連結"),
         ]
 
@@ -1228,7 +1231,9 @@ class TenderNoticeApp(ttk.Frame):
             for col_idx, (key, _label) in enumerate(headers, start=1):
                 value = row.get(key, "")
                 cell = sheet.cell(row=row_idx, column=col_idx)
-                if key == "detail_url":
+                if key == "appeal_date":
+                    cell.value = self._appeal_date_text(row)
+                elif key == "detail_url":
                     cell.value = "開啟連結" if value else ""
                     if value:
                         cell.hyperlink = value
@@ -1237,7 +1242,7 @@ class TenderNoticeApp(ttk.Frame):
                     cell.value = value
                 cell.alignment = Alignment(vertical="top", wrap_text=(key == "tender_name"))
 
-        widths = {"A": 16, "B": 30, "C": 20, "D": 52, "E": 10, "F": 12, "G": 12, "H": 14}
+        widths = {"A": 16, "B": 30, "C": 20, "D": 52, "E": 10, "F": 22, "G": 14}
         for column, width in widths.items():
             sheet.column_dimensions[column].width = width
 
