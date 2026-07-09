@@ -87,6 +87,10 @@ class TenderNoticeApp(ttk.Frame):
         )
         self.query_category_listbox.grid(row=0, column=0, sticky="nsew")
         self.query_category_listbox.bind("<<ListboxSelect>>", lambda _event: self._refresh_query_keyword_listbox())
+        self.query_category_listbox.bind(
+            "<Button-1>",
+            lambda event: self._toggle_category_selection(self.query_category_listbox, event, self._refresh_query_keyword_listbox),
+        )
         query_category_scroll = ttk.Scrollbar(query_category_frame, orient="vertical", command=self.query_category_listbox.yview)
         query_category_scroll.grid(row=0, column=1, sticky="ns")
         self.query_category_listbox.configure(yscrollcommand=query_category_scroll.set)
@@ -115,7 +119,7 @@ class TenderNoticeApp(ttk.Frame):
         self.query_keyword_listbox.configure(yscrollcommand=query_keyword_scroll.set)
         ttk.Label(
             query_keyword_box,
-            text="選分類時會自動查整個分類；沒有選分類時，可反藍右邊幾個標案名稱單獨查。",
+            text="選取分類才會帶出該分類的標案名稱，會查整個分類；再點一次分類即可取消。也可用下方臨時標案名稱查詢。",
             foreground="#666",
             wraplength=520,
         ).grid(row=2, column=0, sticky="ew", pady=(6, 0))
@@ -355,6 +359,22 @@ class TenderNoticeApp(ttk.Frame):
         ]
         return selected[:1]
 
+    def _toggle_category_selection(self, listbox: tk.Listbox, event, refresh) -> str:
+        """單擊切換分類選取狀態（可單選或多選），再點一次即可取消。"""
+        index = listbox.nearest(event.y)
+        bbox = listbox.bbox(index)
+        if bbox is None:
+            return "break"
+        top, height = bbox[1], bbox[3]
+        if event.y < top or event.y > top + height:
+            return "break"
+        if index in listbox.curselection():
+            listbox.selection_clear(index)
+        else:
+            listbox.selection_set(index)
+        refresh()
+        return "break"
+
     def _refresh_category_listboxes(self) -> None:
         query_selected = set(getattr(self, "_selected_query_categories", lambda: [])())
         manage_selected = set(getattr(self, "_selected_manage_categories", lambda: [])())
@@ -381,13 +401,10 @@ class TenderNoticeApp(ttk.Frame):
 
     def _refresh_query_keyword_listbox(self) -> None:
         self.query_keyword_listbox.delete(0, tk.END)
-        selected_categories = self._selected_query_categories()
-        if selected_categories:
-            keywords = []
-            for category in selected_categories:
-                keywords.extend(self.saved_categories.get(category, []))
-        else:
-            keywords = self.saved_keywords
+        # 只有選取分類才帶出該分類的標案名稱；沒選分類就清空
+        keywords: list[str] = []
+        for category in self._selected_query_categories():
+            keywords.extend(self.saved_categories.get(category, []))
         for keyword in self._unique_keywords(keywords):
             self.query_keyword_listbox.insert(tk.END, keyword)
 
@@ -894,6 +911,10 @@ class TenderNoticeApp(ttk.Frame):
         )
         self.appeal_category_listbox.grid(row=0, column=0, sticky="nsew")
         self.appeal_category_listbox.bind("<<ListboxSelect>>", lambda _event: self._refresh_appeal_keyword_listbox())
+        self.appeal_category_listbox.bind(
+            "<Button-1>",
+            lambda event: self._toggle_category_selection(self.appeal_category_listbox, event, self._refresh_appeal_keyword_listbox),
+        )
         category_scroll = ttk.Scrollbar(category_frame, orient="vertical", command=self.appeal_category_listbox.yview)
         category_scroll.grid(row=0, column=1, sticky="ns")
         self.appeal_category_listbox.configure(yscrollcommand=category_scroll.set)
