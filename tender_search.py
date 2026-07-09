@@ -18,6 +18,8 @@ from urllib3.exceptions import InsecureRequestWarning
 
 BASE_URL = "https://web.pcc.gov.tw"
 SEARCH_URL = f"{BASE_URL}/prkms/tender/common/basic/readTenderBasic"
+APPEAL_URL = f"{BASE_URL}/prkms/tpAppeal/common/readTpAppeal"
+APPEAL_SORT = "d-4025577"
 
 CSV_FIELDS = [
     "query_keyword",
@@ -225,6 +227,133 @@ def search_keyword(
 
     print(f"  取得 {len(rows)} 筆", file=sys.stderr)
     return rows
+
+
+# ---------- 公開徵求查詢 ----------
+
+def build_appeal_params(
+    keyword: str,
+    start_date: str,
+    end_date: str,
+    page: int = 1,
+    page_size: int = 100,
+) -> dict[str, str | int]:
+    """公開徵求查詢是 GET，日期用西元斜線格式（normalize_roc_date 已可產出）。"""
+    params: dict[str, str | int] = {
+        "pageSize": page_size,
+        "firstSearch": "true",
+        "tenderId": "",
+        "orgId": "",
+        "orgName": "",
+        "tenderName": keyword,
+        "startDate": normalize_roc_date(start_date),
+        "endDate": normalize_roc_date(end_date),
+        f"{APPEAL_SORT}-n": 1,
+        f"{APPEAL_SORT}-o": 1,
+        f"{APPEAL_SORT}-s": "startDate",
+        f"{APPEAL_SORT}-p": page,
+    }
+    return params
+
+
+def fetch_appeal_html(
+    session: requests.Session,
+    params: dict[str, str | int],
+    timeout: int,
+) -> str:
+    response = session.get(APPEAL_URL, params=params, timeout=timeout)
+    response.raise_for_status()
+    response.encoding = response.apparent_encoding or "utf-8"
+    return response.text
+
+
+def parse_appeal_rows(html: str, keyword: str) -> tuple[list[dict[str, str]], int, str]:
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.select_one("table#tpAppeal")
+    page_param = f"{APPEAL_SORT}-p"
+    if not table:
+        return [], 1, page_param
+
+    rows: list[dict[str, str]] = []
+    for tr in table.select("tbody tr"):
+        cells = tr.find_all("td", recursive=False)
+        if len(cells) < 7:
+            continue
+
+        # 公開徵求日期欄位格式為「公告日 ─ 截止日」，直接抓出兩個日期
+        date_text = clean_cell(cells[5])
+        found_dates = re.findall(r"\d{2,4}/\d{1,2}/\d{1,2}", date_text)
+        announcement_date = found_dates[0] if found_dates else ""
+        deadline = found_dates[1] if len(found_dates) > 1 else ""
+
+        view_link = tr.select_one('a[href*="/prkms/urlSelector/common/tpAppeal"]')
+        detail_url = urljoin(BASE_URL, view_link["href"]) if view_link else ""
+
+        rows.append(
+            {
+                "query_keyword": keyword,
+                "item_no": clean_cell(cells[0]),
+                "agency": clean_cell(cells[1]),
+                "tender_id": clean_cell(cells[2]),
+                "tender_name": extract_tender_name(tr),
+                "announcement_count": clean_cell(cells[4]),
+                "announcement_date": announcement_date,
+                "deadline": deadline,
+                "detail_url": detail_url,
+            }
+        )
+
+    total_pages, page_param = parse_pagination(soup)
+    return rows, total_pages, page_param
+
+
+def search_appeal(
+    session: requests.Session,
+    keyword: str,
+    start_date: str,
+    end_date: str,
+    delay: float = 0.45,
+    timeout: int = 30,
+    page_size: int = 100,
+) -> list[dict[str, str]]:
+    print(f"公開徵求查詢：{keyword or '(全部)'}", file=sys.stderr)
+    first_html = fetch_appeal_html(
+        session,
+        build_appeal_params(keyword, start_date, end_date, page_size=page_size),
+        timeout,
+    )
+    rows, total_pages, _page_param = parse_appeal_rows(first_html, keyword)
+
+    for page in range(2, total_pages + 1):
+        time.sleep(delay)
+        html = fetch_appeal_html(
+            session,
+            build_appeal_params(keyword, start_date, end_date, page=page, page_size=page_size),
+            timeout,
+        )
+        page_rows, _, _ = parse_appeal_rows(html, keyword)
+        rows.extend(page_rows)
+
+    print(f"  取得 {len(rows)} 筆", file=sys.stderr)
+    return rows
+
+
+def dedupe_appeal_rows(rows: Iterable[dict[str, str]]) -> list[dict[str, str]]:
+    merged: dict[tuple[str, str, str], dict[str, str]] = {}
+    keyword_order: dict[tuple[str, str, str], list[str]] = {}
+
+    for row in rows:
+        key = (row["tender_id"], row["agency"], row["detail_url"])
+        keyword = row["query_keyword"]
+        if key not in merged:
+            merged[key] = dict(row)
+            keyword_order[key] = [keyword]
+            continue
+        if keyword not in keyword_order[key]:
+            keyword_order[key].append(keyword)
+            merged[key]["query_keyword"] = "/".join(keyword_order[key])
+
+    return list(merged.values())
 
 
 def dedupe_rows(rows: Iterable[dict[str, str]]) -> list[dict[str, str]]:

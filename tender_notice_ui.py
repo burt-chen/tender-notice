@@ -28,6 +28,9 @@ class TenderNoticeApp(ttk.Frame):
         self.rows: list[dict[str, str]] = []
         self.worker: threading.Thread | None = None
         self.stop_requested = False
+        self.appeal_rows: list[dict[str, str]] = []
+        self.appeal_worker: threading.Thread | None = None
+        self.appeal_stop_requested = False
         self.saved_categories = self._load_keyword_categories()
         self.saved_keywords = self._all_saved_keywords()
 
@@ -58,8 +61,10 @@ class TenderNoticeApp(ttk.Frame):
         notebook = ttk.Notebook(self)
         notebook.grid(row=1, column=0, sticky="nsew", padx=14, pady=(4, 12))
         self.query_tab = ttk.Frame(notebook, padding=12)
+        self.appeal_tab = ttk.Frame(notebook, padding=12)
         self.manage_tab = ttk.Frame(notebook, padding=12)
-        notebook.add(self.query_tab, text="查詢")
+        notebook.add(self.query_tab, text="招標查詢")
+        notebook.add(self.appeal_tab, text="公開徵求查詢")
         notebook.add(self.manage_tab, text="關鍵字管理")
 
         self.query_tab.columnconfigure(0, weight=1)
@@ -69,7 +74,7 @@ class TenderNoticeApp(ttk.Frame):
         query_category_box = ttk.Frame(self.query_tab)
         query_category_box.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         query_category_box.columnconfigure(0, weight=1)
-        ttk.Label(query_category_box, text="選分類（可單選或多選；會查分類內全部關鍵字）").grid(row=0, column=0, sticky="w")
+        ttk.Label(query_category_box, text="選分類（可單選或多選；會查分類內全部標案名稱）").grid(row=0, column=0, sticky="w")
         query_category_frame = ttk.Frame(query_category_box)
         query_category_frame.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
         query_category_frame.columnconfigure(0, weight=1)
@@ -93,7 +98,7 @@ class TenderNoticeApp(ttk.Frame):
         query_keyword_box = ttk.Frame(self.query_tab)
         query_keyword_box.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         query_keyword_box.columnconfigure(0, weight=1)
-        ttk.Label(query_keyword_box, text="將查詢的關鍵字預覽").grid(row=0, column=0, sticky="w")
+        ttk.Label(query_keyword_box, text="將查詢的標案名稱預覽").grid(row=0, column=0, sticky="w")
         query_keyword_frame = ttk.Frame(query_keyword_box)
         query_keyword_frame.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
         query_keyword_frame.columnconfigure(0, weight=1)
@@ -110,7 +115,7 @@ class TenderNoticeApp(ttk.Frame):
         self.query_keyword_listbox.configure(yscrollcommand=query_keyword_scroll.set)
         ttk.Label(
             query_keyword_box,
-            text="選分類時會自動查整個分類；沒有選分類時，可反藍右邊幾個關鍵字單獨查。",
+            text="選分類時會自動查整個分類；沒有選分類時，可反藍右邊幾個標案名稱單獨查。",
             foreground="#666",
             wraplength=520,
         ).grid(row=2, column=0, sticky="ew", pady=(6, 0))
@@ -118,7 +123,7 @@ class TenderNoticeApp(ttk.Frame):
         manual_box = ttk.Frame(self.query_tab)
         manual_box.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         manual_box.columnconfigure(0, weight=1)
-        ttk.Label(manual_box, text="臨時關鍵字（一行一個，不會存入 JSON）").grid(row=0, column=0, sticky="w")
+        ttk.Label(manual_box, text="臨時標案名稱（一行一個，不會存入 JSON）").grid(row=0, column=0, sticky="w")
         self.keyword_text = tk.Text(manual_box, height=3, wrap="word", font=("Microsoft JhengHei UI", 10))
         self.keyword_text.grid(row=1, column=0, sticky="ew", pady=(4, 0))
 
@@ -255,6 +260,7 @@ class TenderNoticeApp(ttk.Frame):
         self.tree.configure(yscrollcommand=y_scroll.set)
 
         self._toggle_date_entries()
+        self._build_appeal_tab()
 
     def _recent_date_range(self) -> tuple[str, str]:
         today = datetime.now()
@@ -352,16 +358,26 @@ class TenderNoticeApp(ttk.Frame):
     def _refresh_category_listboxes(self) -> None:
         query_selected = set(getattr(self, "_selected_query_categories", lambda: [])())
         manage_selected = set(getattr(self, "_selected_manage_categories", lambda: [])())
+        has_appeal = hasattr(self, "appeal_category_listbox")
+        appeal_selected = set(self._selected_appeal_categories()) if has_appeal else set()
         self.query_category_listbox.delete(0, tk.END)
         self.manage_category_listbox.delete(0, tk.END)
+        if has_appeal:
+            self.appeal_category_listbox.delete(0, tk.END)
         for name in self.saved_categories:
             self.query_category_listbox.insert(tk.END, name)
             self.manage_category_listbox.insert(tk.END, name)
+            if has_appeal:
+                self.appeal_category_listbox.insert(tk.END, name)
         for index, name in enumerate(self.saved_categories):
             if name in query_selected:
                 self.query_category_listbox.selection_set(index)
             if name in manage_selected:
                 self.manage_category_listbox.selection_set(index)
+            if has_appeal and name in appeal_selected:
+                self.appeal_category_listbox.selection_set(index)
+        if has_appeal:
+            self._refresh_appeal_keyword_listbox()
 
     def _refresh_query_keyword_listbox(self) -> None:
         self.query_keyword_listbox.delete(0, tk.END)
@@ -459,6 +475,7 @@ class TenderNoticeApp(ttk.Frame):
         self._save_categories(self.saved_categories)
         self._refresh_query_keyword_listbox()
         self._refresh_manage_keyword_listbox()
+        self._refresh_appeal_keyword_listbox()
         self.status_var.set(f"已加入關鍵字：{'、'.join(keywords)}")
 
     def delete_selected_keywords(self) -> None:
@@ -482,6 +499,7 @@ class TenderNoticeApp(ttk.Frame):
         self._save_categories(self.saved_categories)
         self._refresh_query_keyword_listbox()
         self._refresh_manage_keyword_listbox()
+        self._refresh_appeal_keyword_listbox()
         self.status_var.set("已更新 keywords.json")
 
     def import_keywords(self) -> None:
@@ -852,6 +870,385 @@ class TenderNoticeApp(ttk.Frame):
             return int(text)
         except ValueError:
             return None
+
+    # ---------- 公開徵求查詢 ----------
+
+    def _build_appeal_tab(self) -> None:
+        self.appeal_tab.columnconfigure(0, weight=1)
+        self.appeal_tab.columnconfigure(1, weight=1)
+        self.appeal_tab.rowconfigure(4, weight=1)
+
+        category_box = ttk.Frame(self.appeal_tab)
+        category_box.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        category_box.columnconfigure(0, weight=1)
+        ttk.Label(category_box, text="選分類（可單選或多選；會查分類內全部標案名稱）").grid(row=0, column=0, sticky="w")
+        category_frame = ttk.Frame(category_box)
+        category_frame.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
+        category_frame.columnconfigure(0, weight=1)
+        self.appeal_category_listbox = tk.Listbox(
+            category_frame,
+            height=6,
+            selectmode=tk.EXTENDED,
+            exportselection=False,
+            font=("Microsoft JhengHei UI", 10),
+        )
+        self.appeal_category_listbox.grid(row=0, column=0, sticky="nsew")
+        self.appeal_category_listbox.bind("<<ListboxSelect>>", lambda _event: self._refresh_appeal_keyword_listbox())
+        category_scroll = ttk.Scrollbar(category_frame, orient="vertical", command=self.appeal_category_listbox.yview)
+        category_scroll.grid(row=0, column=1, sticky="ns")
+        self.appeal_category_listbox.configure(yscrollcommand=category_scroll.set)
+        category_actions = ttk.Frame(category_box)
+        category_actions.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(category_actions, text="全選分類", command=self.select_all_appeal_categories).pack(side=tk.LEFT)
+        ttk.Button(category_actions, text="取消分類", command=self.clear_appeal_category_selection).pack(side=tk.LEFT, padx=(6, 0))
+
+        keyword_box = ttk.Frame(self.appeal_tab)
+        keyword_box.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        keyword_box.columnconfigure(0, weight=1)
+        ttk.Label(keyword_box, text="將查詢的標案名稱預覽").grid(row=0, column=0, sticky="w")
+        keyword_frame = ttk.Frame(keyword_box)
+        keyword_frame.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
+        keyword_frame.columnconfigure(0, weight=1)
+        self.appeal_keyword_listbox = tk.Listbox(
+            keyword_frame,
+            height=6,
+            selectmode=tk.EXTENDED,
+            exportselection=False,
+            font=("Microsoft JhengHei UI", 10),
+        )
+        self.appeal_keyword_listbox.grid(row=0, column=0, sticky="nsew")
+        keyword_scroll = ttk.Scrollbar(keyword_frame, orient="vertical", command=self.appeal_keyword_listbox.yview)
+        keyword_scroll.grid(row=0, column=1, sticky="ns")
+        self.appeal_keyword_listbox.configure(yscrollcommand=keyword_scroll.set)
+        ttk.Label(
+            keyword_box,
+            text="不選分類、也不輸入標案名稱時，會查詢日期區間內全部公開徵求。",
+            foreground="#666",
+            wraplength=520,
+        ).grid(row=2, column=0, sticky="ew", pady=(6, 0))
+
+        manual_box = ttk.Frame(self.appeal_tab)
+        manual_box.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        manual_box.columnconfigure(0, weight=1)
+        ttk.Label(manual_box, text="臨時標案名稱（一行一個，不會存入 JSON）").grid(row=0, column=0, sticky="w")
+        self.appeal_keyword_text = tk.Text(manual_box, height=3, wrap="word", font=("Microsoft JhengHei UI", 10))
+        self.appeal_keyword_text.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+
+        date_row = ttk.LabelFrame(self.appeal_tab, text="公開徵求日期（起訖）", padding=10)
+        date_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        default_start, default_end = self._recent_appeal_range()
+        ttk.Label(date_row, text="起日").pack(side=tk.LEFT, padx=(0, 4))
+        self.appeal_start_date_var = tk.StringVar(value=default_start)
+        ttk.Entry(date_row, width=14, textvariable=self.appeal_start_date_var).pack(side=tk.LEFT)
+        ttk.Label(date_row, text="迄日").pack(side=tk.LEFT, padx=(10, 4))
+        self.appeal_end_date_var = tk.StringVar(value=default_end)
+        ttk.Entry(date_row, width=14, textvariable=self.appeal_end_date_var).pack(side=tk.LEFT)
+        ttk.Button(date_row, text="最近 3 個月", command=self.apply_recent_appeal_dates).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(date_row, text="日期用西元，例如 2026/07/09；民國年也可；區間請勿超過 3 個月",
+                  foreground="#666").pack(side=tk.LEFT, padx=(10, 0))
+
+        button_row = ttk.Frame(self.appeal_tab)
+        button_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 8))
+        self.appeal_search_button = ttk.Button(button_row, text="開始查詢", style="Primary.TButton", command=self.start_appeal_search)
+        self.appeal_search_button.pack(side=tk.LEFT)
+        self.appeal_stop_button = ttk.Button(button_row, text="停止", command=self.request_appeal_stop, state="disabled")
+        self.appeal_stop_button.pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(button_row, text="匯出 Excel", command=self.appeal_export_excel).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(button_row, text="開啟徵求頁面", command=self.appeal_open_selected).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(button_row, text="清除結果", command=self.appeal_clear_results).pack(side=tk.LEFT, padx=(8, 0))
+
+        table_frame = ttk.Frame(self.appeal_tab)
+        table_frame.grid(row=4, column=0, columnspan=2, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
+        columns = ("keyword", "agency", "tender_id", "name", "announce", "deadline", "count")
+        self.appeal_tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        headings = {
+            "keyword": "查詢名稱",
+            "agency": "機關",
+            "tender_id": "案號",
+            "name": "標案名稱",
+            "announce": "公告日期",
+            "deadline": "截止日期",
+            "count": "公告次數",
+        }
+        widths = {
+            "keyword": 100,
+            "agency": 240,
+            "tender_id": 150,
+            "name": 400,
+            "announce": 100,
+            "deadline": 100,
+            "count": 70,
+        }
+        for col in columns:
+            self.appeal_tree.heading(col, text=headings[col])
+            self.appeal_tree.column(col, width=widths[col], minwidth=52, stretch=(col == "name"))
+        self.appeal_tree.grid(row=0, column=0, sticky="nsew")
+        self.appeal_tree.bind("<Double-1>", lambda _event: self.appeal_open_selected())
+        appeal_y_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.appeal_tree.yview)
+        appeal_y_scroll.grid(row=0, column=1, sticky="ns")
+        self.appeal_tree.configure(yscrollcommand=appeal_y_scroll.set)
+
+        self._refresh_category_listboxes()
+
+    def _recent_appeal_range(self) -> tuple[str, str]:
+        today = datetime.now()
+        start = today - timedelta(days=89)
+        return start.strftime("%Y/%m/%d"), today.strftime("%Y/%m/%d")
+
+    def apply_recent_appeal_dates(self) -> None:
+        start, end = self._recent_appeal_range()
+        self.appeal_start_date_var.set(start)
+        self.appeal_end_date_var.set(end)
+
+    def _selected_appeal_categories(self) -> list[str]:
+        return [
+            self.appeal_category_listbox.get(index)
+            for index in self.appeal_category_listbox.curselection()
+        ]
+
+    def _refresh_appeal_keyword_listbox(self) -> None:
+        if not hasattr(self, "appeal_keyword_listbox"):
+            return
+        self.appeal_keyword_listbox.delete(0, tk.END)
+        selected_categories = self._selected_appeal_categories()
+        if selected_categories:
+            keywords = []
+            for category in selected_categories:
+                keywords.extend(self.saved_categories.get(category, []))
+        else:
+            keywords = self.saved_keywords
+        for keyword in self._unique_keywords(keywords):
+            self.appeal_keyword_listbox.insert(tk.END, keyword)
+
+    def select_all_appeal_categories(self) -> None:
+        self.appeal_category_listbox.selection_set(0, tk.END)
+        self._refresh_appeal_keyword_listbox()
+
+    def clear_appeal_category_selection(self) -> None:
+        self.appeal_category_listbox.selection_clear(0, tk.END)
+        self.appeal_keyword_listbox.selection_clear(0, tk.END)
+        self._refresh_appeal_keyword_listbox()
+
+    def _appeal_keywords(self) -> list[str]:
+        category_keywords = []
+        selected_categories = self._selected_appeal_categories()
+        for category in selected_categories:
+            category_keywords.extend(self.saved_categories.get(category, []))
+        selected = []
+        if not selected_categories:
+            selected = [
+                self.appeal_keyword_listbox.get(index)
+                for index in self.appeal_keyword_listbox.curselection()
+            ]
+        manual = [line.strip() for line in self.appeal_keyword_text.get("1.0", "end").splitlines()]
+        return self._unique_keywords([*category_keywords, *selected, *manual])
+
+    def start_appeal_search(self) -> None:
+        if self.appeal_worker and self.appeal_worker.is_alive():
+            return
+
+        start_date = self.appeal_start_date_var.get().strip()
+        end_date = self.appeal_end_date_var.get().strip()
+        if not start_date or not end_date:
+            messagebox.showwarning("缺少日期", "請輸入公開徵求日期的起日與迄日。")
+            return
+        try:
+            start_norm = tender_search.normalize_roc_date(start_date)
+            end_norm = tender_search.normalize_roc_date(end_date)
+        except ValueError as exc:
+            messagebox.showwarning("日期格式錯誤", str(exc))
+            return
+        start_dt = datetime.strptime(start_norm, "%Y/%m/%d")
+        end_dt = datetime.strptime(end_norm, "%Y/%m/%d")
+        if end_dt < start_dt:
+            messagebox.showwarning("日期顛倒", "迄日不可早於起日。")
+            return
+        if (end_dt - start_dt).days > 93:
+            messagebox.showwarning("區間過長", "公開徵求查詢的日期區間請勿超過 3 個月，請縮短後再查。")
+            return
+
+        keywords = self._appeal_keywords()
+        if not keywords:
+            keywords = [""]  # 未指定標案名稱時，查詢區間內全部公開徵求
+
+        self.appeal_clear_results()
+        self.appeal_stop_requested = False
+        self.appeal_search_button.configure(state="disabled")
+        self.appeal_stop_button.configure(state="normal")
+        self.status_var.set("公開徵求查詢中...")
+
+        self.appeal_worker = threading.Thread(
+            target=self._appeal_search_worker,
+            args=(keywords, start_norm, end_norm),
+            daemon=True,
+        )
+        self.appeal_worker.start()
+
+    def request_appeal_stop(self) -> None:
+        self.appeal_stop_requested = True
+        self.status_var.set("停止中，等待目前查詢完成...")
+
+    def _appeal_search_worker(self, keywords: list[str], start_date: str, end_date: str) -> None:
+        try:
+            session = requests.Session()
+            session.verify = False
+            urllib3.disable_warnings(InsecureRequestWarning)
+            session.headers.update(
+                {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+                    )
+                }
+            )
+
+            rows: list[dict[str, str]] = []
+            for index, keyword in enumerate(keywords, start=1):
+                if self.appeal_stop_requested:
+                    break
+                label = keyword or "(全部)"
+                self._set_status(f"公開徵求查詢 {index}/{len(keywords)}：{label}")
+                rows.extend(
+                    tender_search.search_appeal(session, keyword, start_date, end_date, delay=0.45, timeout=30)
+                )
+                if index < len(keywords):
+                    time.sleep(0.45)
+
+            rows = tender_search.dedupe_appeal_rows(rows)
+            self.after(0, self._finish_appeal_search, rows, None, self.appeal_stop_requested)
+        except Exception as exc:
+            self.after(0, self._finish_appeal_search, [], exc, False)
+
+    def _finish_appeal_search(self, rows: list[dict[str, str]], error: Exception | None, stopped: bool) -> None:
+        self.appeal_search_button.configure(state="normal")
+        self.appeal_stop_button.configure(state="disabled")
+
+        if error:
+            self.status_var.set("公開徵求查詢失敗")
+            messagebox.showerror("查詢失敗", str(error))
+            return
+
+        self.appeal_rows = rows
+        for row in rows:
+            self.appeal_tree.insert(
+                "",
+                "end",
+                values=(
+                    row["query_keyword"],
+                    row["agency"],
+                    row["tender_id"],
+                    row["tender_name"],
+                    row["announcement_date"],
+                    row["deadline"],
+                    row["announcement_count"],
+                ),
+            )
+        prefix = "已停止，" if stopped else "完成，"
+        self.status_var.set(f"{prefix}公開徵求共 {len(rows)} 筆")
+        if not rows and not stopped:
+            messagebox.showinfo("查無資料", "目前日期區間沒有查到公開徵求資料，請調整標案名稱或日期後再查一次。")
+
+    def appeal_clear_results(self) -> None:
+        self.appeal_rows = []
+        for item in self.appeal_tree.get_children():
+            self.appeal_tree.delete(item)
+        self.status_var.set("準備就緒")
+
+    def _selected_appeal_row(self) -> dict[str, str] | None:
+        selection = self.appeal_tree.selection()
+        if not selection:
+            return None
+        index = self.appeal_tree.index(selection[0])
+        if 0 <= index < len(self.appeal_rows):
+            return self.appeal_rows[index]
+        return None
+
+    def appeal_open_selected(self) -> None:
+        row = self._selected_appeal_row()
+        if not row:
+            messagebox.showinfo("尚未選取", "請先選取一筆公開徵求。")
+            return
+        if not row["detail_url"]:
+            messagebox.showinfo("沒有連結", "這筆資料沒有可開啟的徵求連結。")
+            return
+        webbrowser.open(row["detail_url"])
+
+    def appeal_export_excel(self) -> None:
+        if not self.appeal_rows:
+            messagebox.showinfo("沒有資料", "目前沒有可匯出的公開徵求查詢結果。")
+            return
+
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Alignment, Font, PatternFill
+        except ImportError:
+            messagebox.showerror(
+                "缺少套件",
+                "匯出 Excel 需要 openpyxl。\n請重新執行 run_ui.bat，或執行：py -m pip install -r requirements.txt",
+            )
+            return
+
+        default_name = f"公開徵求查詢結果_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+        path = filedialog.asksaveasfilename(
+            title="匯出 Excel",
+            defaultextension=".xlsx",
+            initialfile=default_name,
+            filetypes=[("Excel 檔案", "*.xlsx"), ("所有檔案", "*.*")],
+        )
+        if not path:
+            return
+
+        headers = [
+            ("query_keyword", "查詢名稱"),
+            ("agency", "機關名稱"),
+            ("tender_id", "標案案號"),
+            ("tender_name", "標案名稱"),
+            ("announcement_count", "公告次數"),
+            ("announcement_date", "公告日期"),
+            ("deadline", "截止日期"),
+            ("detail_url", "徵求連結"),
+        ]
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "公開徵求"
+
+        header_fill = PatternFill("solid", fgColor="D9EAF7")
+        header_font = Font(bold=True, color="000000")
+        for col_idx, (_key, label) in enumerate(headers, start=1):
+            cell = sheet.cell(row=1, column=col_idx, value=label)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        for row_idx, row in enumerate(self.appeal_rows, start=2):
+            for col_idx, (key, _label) in enumerate(headers, start=1):
+                value = row.get(key, "")
+                cell = sheet.cell(row=row_idx, column=col_idx)
+                if key == "detail_url":
+                    cell.value = "開啟連結" if value else ""
+                    if value:
+                        cell.hyperlink = value
+                        cell.style = "Hyperlink"
+                else:
+                    cell.value = value
+                cell.alignment = Alignment(vertical="top", wrap_text=(key == "tender_name"))
+
+        widths = {"A": 16, "B": 30, "C": 20, "D": 52, "E": 10, "F": 12, "G": 12, "H": 14}
+        for column, width in widths.items():
+            sheet.column_dimensions[column].width = width
+
+        sheet.freeze_panes = "A2"
+        sheet.row_dimensions[1].height = 24
+        for row_idx in range(2, len(self.appeal_rows) + 2):
+            sheet.row_dimensions[row_idx].height = 36
+
+        workbook.save(path)
+        self.status_var.set(f"已匯出：{path}")
+        messagebox.showinfo("匯出完成", f"已匯出 {len(self.appeal_rows)} 筆公開徵求資料到 Excel。")
 
 
 def main() -> None:
