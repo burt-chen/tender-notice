@@ -922,7 +922,7 @@ class TenderNoticeApp(ttk.Frame):
         self.appeal_keyword_listbox.configure(yscrollcommand=keyword_scroll.set)
         ttk.Label(
             keyword_box,
-            text="不選分類、也不輸入標案名稱時，會查詢日期區間內全部公開徵求。",
+            text="選取分類才會帶出該分類的標案名稱；取消分類即清空。也可用下方臨時標案名稱查詢。",
             foreground="#666",
             wraplength=520,
         ).grid(row=2, column=0, sticky="ew", pady=(6, 0))
@@ -1011,13 +1011,10 @@ class TenderNoticeApp(ttk.Frame):
         if not hasattr(self, "appeal_keyword_listbox"):
             return
         self.appeal_keyword_listbox.delete(0, tk.END)
-        selected_categories = self._selected_appeal_categories()
-        if selected_categories:
-            keywords = []
-            for category in selected_categories:
-                keywords.extend(self.saved_categories.get(category, []))
-        else:
-            keywords = self.saved_keywords
+        # 只有選取分類才帶出該分類的標案名稱；沒選分類就清空
+        keywords: list[str] = []
+        for category in self._selected_appeal_categories():
+            keywords.extend(self.saved_categories.get(category, []))
         for keyword in self._unique_keywords(keywords):
             self.appeal_keyword_listbox.insert(tk.END, keyword)
 
@@ -1070,7 +1067,8 @@ class TenderNoticeApp(ttk.Frame):
 
         keywords = self._appeal_keywords()
         if not keywords:
-            keywords = [""]  # 未指定標案名稱時，查詢區間內全部公開徵求
+            messagebox.showwarning("缺少查詢條件", "請先選取分類，或輸入臨時標案名稱後再查詢。")
+            return
 
         self.appeal_clear_results()
         self.appeal_stop_requested = False
