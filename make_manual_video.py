@@ -49,13 +49,15 @@ FPS = 30
 
 SCENE_PLAN = [
     ("01", "opening", 5.5),
-    ("02", "categories", 7.0),
-    ("03", "manual_date", 7.0),
-    ("04", "safe_search", 6.5),
-    ("05", "results", 8.0),
-    ("06", "detail", 6.5),
-    ("07", "manage", 7.0),
-    ("08", "export", 7.0),
+    ("02", "tender_setup", 7.0),
+    ("03", "tender_results", 8.0),
+    ("04", "tender_export", 7.0),
+    ("05", "appeal_setup", 7.0),
+    ("06", "appeal_search", 6.5),
+    ("07", "appeal_results", 8.0),
+    ("08", "appeal_detail", 6.5),
+    ("09", "appeal_export", 7.0),
+    ("10", "manage", 7.0),
 ]
 
 
@@ -109,6 +111,39 @@ DEMO_ROWS = [
         "bid_deadline": "2026/07/25",
         "budget_amount": "2450000",
         "detail_url": "https://web.pcc.gov.tw/prkms/tender/common/basic/indexTenderBasic",
+    },
+]
+
+DEMO_APPEAL_ROWS = [
+    {
+        "query_keyword": "資訊安全",
+        "agency": "臺中市政府資訊中心",
+        "tender_id": "TC-APPEAL-11501",
+        "tender_name": "資安監控服務公開徵求廠商意見",
+        "announcement_count": "1",
+        "announcement_date": "2026/07/07",
+        "deadline": "2026/07/16",
+        "detail_url": "https://web.pcc.gov.tw/prkms/tpAppeal/common/readTpAppeal",
+    },
+    {
+        "query_keyword": "雲端服務",
+        "agency": "高雄市政府研究發展考核委員會",
+        "tender_id": "KHH-CLOUD-2026",
+        "tender_name": "雲端備份平台建置公開徵求",
+        "announcement_count": "2",
+        "announcement_date": "2026/07/08",
+        "deadline": "2026/07/18",
+        "detail_url": "https://web.pcc.gov.tw/prkms/tpAppeal/common/readTpAppeal",
+    },
+    {
+        "query_keyword": "地籍測量",
+        "agency": "新竹縣政府地政處",
+        "tender_id": "HC-LAND-AP-03",
+        "tender_name": "地籍測量成果檢核作業公開徵求",
+        "announcement_count": "1",
+        "announcement_date": "2026/07/09",
+        "deadline": "2026/07/20",
+        "detail_url": "https://web.pcc.gov.tw/prkms/tpAppeal/common/readTpAppeal",
     },
 ]
 
@@ -178,11 +213,36 @@ def configure_demo_state(app) -> None:
 
 
 def populate_results(app) -> None:
+    app.clear_results()
     app._finish_search(DEMO_ROWS, None, False)
     first = app.tree.get_children()[0]
     app.tree.selection_set(first)
     app.tree.focus(first)
     app.tree.see(first)
+
+
+def configure_appeal_state(app) -> None:
+    app.saved_categories = {name: values[:] for name, values in DEMO_CATEGORIES.items()}
+    app.saved_keywords = app._all_saved_keywords()
+    app._refresh_category_listboxes()
+    app.appeal_category_listbox.selection_clear(0, "end")
+    app.appeal_category_listbox.selection_set(0)
+    app._refresh_appeal_keyword_listbox()
+    app.appeal_keyword_listbox.selection_set(0, 1)
+    app.appeal_keyword_text.delete("1.0", "end")
+    app.appeal_keyword_text.insert("1.0", "資料備份\n系統整合")
+    app.appeal_start_date_var.set("2026/07/07")
+    app.appeal_end_date_var.set("2026/07/09")
+    app.status_var.set("已載入公開徵求查詢示範條件")
+
+
+def populate_appeal_results(app) -> None:
+    app.appeal_clear_results()
+    app._finish_appeal_search(DEMO_APPEAL_ROWS, None, False)
+    first = app.appeal_tree.get_children()[0]
+    app.appeal_tree.selection_set(first)
+    app.appeal_tree.focus(first)
+    app.appeal_tree.see(first)
 
 
 def select_manage_tab(app) -> None:
@@ -218,36 +278,57 @@ def export_demo_excel(app) -> Path:
     return output
 
 
+def export_demo_appeal_excel(app) -> Path:
+    DEMO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output = DEMO_OUTPUT_DIR / "appeal_notice_demo.xlsx"
+    output.unlink(missing_ok=True)
+    if not app.appeal_rows:
+        populate_appeal_results(app)
+    with fixed_save_dialog(output):
+        app.appeal_export_excel()
+    return output
+
+
 def configure_scene(app, scene_name: str) -> None:
     notebook = find_notebook(app)
-    if scene_name in {"categories", "manual_date", "safe_search", "results", "detail", "export"}:
+    if scene_name in {"tender_setup", "tender_results", "tender_export"}:
         notebook.select(app.query_tab)
+    elif scene_name in {"appeal_setup", "appeal_search", "appeal_results", "appeal_detail", "appeal_export"}:
+        notebook.select(app.appeal_tab)
 
-    if scene_name == "categories":
-        configure_demo_state(app)
-    elif scene_name == "manual_date":
+    if scene_name == "tender_setup":
         configure_demo_state(app)
         app.status_var.set("自訂日期區間：2026/07/06 到 2026/07/08")
-    elif scene_name == "safe_search":
-        configure_demo_state(app)
-        app.search_button.configure(state="disabled")
-        app.stop_button.configure(state="normal")
-        app.status_var.set("離線預覽查詢中：系統維護、資訊安全、地籍測量")
-    elif scene_name == "results":
+    elif scene_name == "tender_results":
         configure_demo_state(app)
         populate_results(app)
-    elif scene_name == "detail":
-        configure_demo_state(app)
-        populate_results(app)
-        app.status_var.set("已選取公告，可開啟政府採購網明細連結")
-    elif scene_name == "manage":
-        configure_demo_state(app)
-        select_manage_tab(app)
-    elif scene_name == "export":
+    elif scene_name == "tender_export":
         configure_demo_state(app)
         populate_results(app)
         output = export_demo_excel(app)
-        app.status_var.set(f"已匯出示範 Excel：{output}")
+        app.status_var.set(f"已匯出招標示範 Excel：{output}")
+    elif scene_name == "appeal_setup":
+        configure_appeal_state(app)
+    elif scene_name == "appeal_search":
+        configure_appeal_state(app)
+        app.appeal_search_button.configure(state="disabled")
+        app.appeal_stop_button.configure(state="normal")
+        app.status_var.set("公開徵求離線預覽查詢中：資訊安全、雲端服務、地籍測量")
+    elif scene_name == "appeal_results":
+        configure_appeal_state(app)
+        populate_appeal_results(app)
+    elif scene_name == "appeal_detail":
+        configure_appeal_state(app)
+        populate_appeal_results(app)
+        app.status_var.set("已選取公開徵求資料，可開啟徵求頁面查看明細")
+    elif scene_name == "appeal_export":
+        configure_appeal_state(app)
+        populate_appeal_results(app)
+        output = export_demo_appeal_excel(app)
+        app.status_var.set(f"已匯出公開徵求示範 Excel：{output}")
+    elif scene_name == "manage":
+        configure_demo_state(app)
+        select_manage_tab(app)
     else:
         raise ValueError(f"unknown scene: {scene_name}")
 
@@ -256,35 +337,40 @@ def configure_scene(app, scene_name: str) -> None:
 
 
 def generate_frames(sections: dict[str, str]) -> list[Path]:
+    import tkinter as tk
     import tender_notice_ui
 
     shutil.rmtree(FRAMES_DIR, ignore_errors=True)
     FRAMES_DIR.mkdir(parents=True, exist_ok=True)
     frames: list[Path] = []
 
-    title_img = title_frame("政府採購公告查詢工具", "關鍵字追蹤、結果檢視與 Excel 匯出", sections["01"])
+    title_img = title_frame("政府採購公告查詢工具", "招標公告、公開徵求與 Excel 匯出", sections["01"])
     title_path = FRAMES_DIR / "01_opening.png"
     title_img.save(title_path)
     frames.append(title_path)
 
     old_cwd = Path.cwd()
     os.chdir(ROOT)
-    app = tender_notice_ui.TenderNoticeApp()
-    app.geometry("1500x900+50+40")
-    app.minsize(1500, 900)
+    root = tk.Tk()
+    root.title("政府採購公告查詢工具")
+    root.geometry("1500x900+50+40")
+    root.minsize(1500, 900)
+    app = tender_notice_ui.TenderNoticeApp(root)
+    app.pack(fill="both", expand=True)
     try:
         with nonblocking_messageboxes():
-            pump(app, 0.8)
+            pump(root, 0.8)
             for scene_id, scene_name, _duration in SCENE_PLAN[1:]:
                 configure_scene(app, scene_name)
-                raw = capture_tk_window(app)
+                root.update()
+                raw = capture_tk_window(root)
                 frame = subtitle_frame(raw, sections[scene_id])
                 out = FRAMES_DIR / f"{scene_id}_{scene_name}.png"
                 frame.save(out)
                 frames.append(out)
     finally:
         try:
-            app.destroy()
+            root.destroy()
         except Exception:
             pass
         os.chdir(old_cwd)
